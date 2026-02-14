@@ -1,0 +1,50 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  wpab-api:
+    build:
+      context: ./app
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      RQ_QUEUE: wpab
+      WPAB_VERSION: ${WPAB_VERSION:-dev}
+      WPAB_STATUS_TOKEN: ${WPAB_STATUS_TOKEN:-}
+    command: uvicorn server:app --host 0.0.0.0 --port 8080
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - default
+      - traefik_proxy
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik_proxy
+      - traefik.http.services.wpab-worker.loadbalancer.server.port=8080
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  wpab-worker:
+    build:
+      context: ./app
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      RQ_QUEUE: wpab
+    command: sh -lc "rq worker --url $REDIS_URL $RQ_QUEUE"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+networks:
+  traefik_proxy:
+    external: true
