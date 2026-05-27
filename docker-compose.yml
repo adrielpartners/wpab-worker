@@ -1,0 +1,58 @@
+services:
+  api:
+    build: .
+    container_name: wpab-api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
+    ports:
+      - "8080:8080"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - WPAB_ALLOWED_SITES=${WPAB_ALLOWED_SITES:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - WPAB_LOG_LEVEL=${WPAB_LOG_LEVEL:-INFO}
+      - WPAB_WORKER_ENV=${WPAB_WORKER_ENV:-development}
+    volumes:
+      - .:/app
+      - work_data:/work
+    depends_on:
+      - redis
+
+  worker:
+    build: .
+    container_name: wpab-worker
+    command: rq worker wpab-transcription --url redis://redis:6379
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - WPAB_ALLOWED_SITES=${WPAB_ALLOWED_SITES:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - WPAB_LOG_LEVEL=${WPAB_LOG_LEVEL:-INFO}
+      - WPAB_WORKER_ENV=${WPAB_WORKER_ENV:-development}
+    volumes:
+      - .:/app
+      - work_data:/work
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    container_name: wpab-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  cleanup:
+    build: .
+    container_name: wpab-cleanup
+    command: python3 -m app.workers.cleanup_daemon
+    environment:
+      - WPAB_LOG_LEVEL=${WPAB_LOG_LEVEL:-INFO}
+      - WPAB_WORKER_ENV=${WPAB_WORKER_ENV:-development}
+    volumes:
+      - .:/app
+      - work_data:/work
+    depends_on: []
+
+volumes:
+  redis_data:
+  work_data:
