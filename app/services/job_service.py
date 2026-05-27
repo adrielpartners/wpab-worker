@@ -13,7 +13,7 @@ from app.core.logging import logger
 from app.models.payloads import CallbackSuccess, CallbackFailure
 from app.services.audio_download_service import download_audio
 from app.services.chunking_service import chunk_audio
-from app.services.transcription_service import transcribe_chunk
+from app.services.providers.registry import get_transcription_provider
 from app.services.result_assembly_service import assemble_transcript
 from app.services.callback_client import send_callback
 
@@ -45,11 +45,13 @@ def run_transcription_job(
     chunk_seconds: int | None = None,
     job_uuid: str = "",
     job_id: str | None = None,
+    provider: str = "openai",
+    provider_config: dict | None = None,
 ) -> dict:
     """
     Execute a full transcription job pipeline.
 
-    This function is designed to be called by an RQ worker.
+    Resolves the provider from the job payload and uses it for chunk transcription.
     """
     started = time.time()
     resolved_model = model or settings.DEFAULT_MODEL
@@ -68,6 +70,9 @@ def run_transcription_job(
     chunk_dir = job_dir / "chunks"
     job_dir.mkdir(parents=True, exist_ok=True)
 
+    # Resolve provider.
+    provider_instance = get_transcription_provider(provider)
+
     # Store metadata in RQ job.
     current_job = get_current_job()
     if current_job:
@@ -75,11 +80,13 @@ def run_transcription_job(
         source_domain = (urlparse(audio_url).netloc or "unknown").strip()[:255]
         current_job.meta["attachment_id"] = attachment_id
         current_job.meta["source_url_domain"] = source_domain
+        current_job.meta["audio_url"] = (audio_url[:200] + "...") if len(audio_url) > 200 else audio_url
+        current_job.meta["provider"] = provider
         current_job.save_meta()
 
     logger.info(
-        "job_start job_id=%s attachment_id=%s model=%s max_download_mb=%s",
-        job_id, attachment_id, resolved_model, settings.MAX_DOWNLOAD_MB,
+        "job_start job_id=%s attachment_id=%s model=%s provider=%s max_download_mb=%s",
+        job_id, attachment_id, resolved_model, provider, settings.MAX_DOWNLOAD_MB,
     )
 
     try:
@@ -89,14 +96,14 @@ def run_transcription_job(
         # Phase 2: Chunk
         chunks = chunk_audio(download_result.source_path, chunk_dir, resolved_chunk_seconds)
 
-        # Phase 3: Transcribe each chunk
+        # Phase 3: Transcribe each chunk (via resolved provider)
         chunk_transcripts = []
         for index, chunk in enumerate(chunks, start=1):
             logger.info(
-                "chunk_transcribe_start job_id=%s chunk_index=%s total_chunks=%s",
-                job_id, index, len(chunks),
+                "chunk_transcribe_start job_id=%s chunk_index=%s total_chunks=%s provider=%s",
+                job_id, index, len(chunks), provider,
             )
-            text = transcribe_chunk(chunk, resolved_model, job_id)
+            text = provider_instance.transcribe_chunk(chunk, resolved_model, job_id)
             chunk_transcripts.append(text)
 
         # Phase 4: Assemble
@@ -104,20 +111,20 @@ def run_transcription_job(
 
         # Phase 5: Send success callback
         success_payload = CallbackSuccess(
-            job_id=job_id,
-            status="done",
             attachment_id=attachment_id,
-            job_uuid=job_uuid,
+            status="done",
             transcript=assembly.transcript,
-            model=resolved_model,
             seconds=int(round(assembly.total_duration)),
+            model=resolved_model,
+            job_uuid=job_uuid,
+            timestamp=int(time.time()),
         )
         send_callback(callback_url, success_payload.model_dump(), site_id, job_id)
 
         elapsed = time.time() - started
         logger.info(
-            "job_end job_id=%s status=success runtime_seconds=%.3f transcript_chars=%s",
-            job_id, elapsed, len(assembly.transcript),
+            "job_end job_id=%s status=success runtime_seconds=%.3f transcript_chars=%s provider=%s",
+            job_id, elapsed, len(assembly.transcript), provider,
         )
         return success_payload.model_dump()
 
@@ -125,12 +132,16 @@ def run_transcription_job(
         elapsed = time.time() - started
         logger.exception("job_end job_id=%s status=failed runtime_seconds=%.3f", job_id, elapsed)
 
+        safe_message = _safe_error(exc)
         error_payload = CallbackFailure(
-            job_id=job_id,
-            status="error",
             attachment_id=attachment_id,
+            status="error",
+            transcript="",
+            seconds=0,
+            model=resolved_model,
             job_uuid=job_uuid,
-            error=_safe_error(exc),
+            error=safe_message,
+            timestamp=int(time.time()),
         )
         try:
             send_callback(callback_url, error_payload.model_dump(), site_id, job_id)

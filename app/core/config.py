@@ -23,7 +23,11 @@ class Settings:
     QUEUE_DEFAULT_TIMEOUT: str = os.getenv("WPAB_QUEUE_DEFAULT_TIMEOUT", "2h")
     JOB_RESULT_TTL: int = int(os.getenv("WPAB_JOB_RESULT_TTL", "86400"))
 
-    # OpenAI
+    # Provider API keys
+    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    DEEPGRAM_API_KEY: str = os.getenv("DEEPGRAM_API_KEY", "")
+
+    # OpenAI (legacy, also used by OpenAI provider)
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     OPENAI_TIMEOUT: float = float(os.getenv("WPAB_OPENAI_TIMEOUT_SECONDS", "300"))
 

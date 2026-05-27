@@ -21,6 +21,8 @@ class TranscribeRequest(BaseModel):
     chunk_seconds: Optional[PositiveInt] = None
     timestamp: int = 0
     site_id: Optional[str] = None
+    provider: str = "openai"
+    provider_config: Optional[dict] = None
 
     @field_validator("operation")
     @classmethod

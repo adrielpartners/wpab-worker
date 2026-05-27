@@ -134,6 +134,8 @@ async def submit_transcription_job(request: Request):
         chunk_seconds=payload.chunk_seconds,
         job_uuid=payload.job_uuid,
         job_id=str(payload.job_id),
+        provider=payload.provider,
+        provider_config=payload.provider_config,
         job_timeout=settings.QUEUE_DEFAULT_TIMEOUT,
         result_ttl=settings.JOB_RESULT_TTL,
     )
