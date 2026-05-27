@@ -468,8 +468,10 @@ Result assembly should:
 Expected WordPress route:
 
 ```text
-POST /wp-json/wpab/v1/worker-callback
+POST /wp-json/wp-audio-buddy/v1/transcription-callback
 ```
+
+Note: The actual route name is **`wp-audio-buddy/v1/transcription-callback`** (not `wpab/v1/worker-callback`). This is the route registered by the WP Audio Buddy plugin. The worker receives the callback URL dynamically from the job submission payload and does not hardcode the route.
 
 ## Success Payload
 

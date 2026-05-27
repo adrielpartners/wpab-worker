@@ -164,7 +164,7 @@ def get_job_status(job_id: str):
     ).model_dump(exclude_none=True)
 
 
-@router.get("/v1/queue")
+@router.get("/v1/admin/queue")
 def queue_status():
     """Get aggregate queue statistics."""
     redis_conn = get_redis()
@@ -180,7 +180,7 @@ def queue_status():
     }
 
 
-@router.get("/v1/failed")
+@router.get("/v1/admin/failed")
 def failed_jobs(limit: int = 20):
     """List recently failed jobs."""
     safe_limit = max(1, min(limit, 100))

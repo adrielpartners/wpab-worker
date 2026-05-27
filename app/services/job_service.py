@@ -87,7 +87,6 @@ def run_transcription_job(
         assembly = assemble_transcript(chunks, chunk_transcripts, download_result.source_path, resolved_model, job_id)
 
         # Phase 5: Send success callback
-        import time as time_module
         success_payload = CallbackSuccess(
             attachment_id=attachment_id,
             status="done",
@@ -95,7 +94,7 @@ def run_transcription_job(
             seconds=int(round(assembly.total_duration)),
             model=resolved_model,
             job_uuid=job_uuid,
-            timestamp=int(time_module.time()),
+            timestamp=int(time.time()),
         )
         send_callback(callback_url, success_payload.model_dump(), site_id, job_id)
 
@@ -110,7 +109,6 @@ def run_transcription_job(
         elapsed = time.time() - started
         logger.exception("job_end job_id=%s status=failed runtime_seconds=%.3f", job_id, elapsed)
 
-        import time as time_module
         error_payload = CallbackFailure(
             attachment_id=attachment_id,
             status="error",
@@ -119,7 +117,7 @@ def run_transcription_job(
             model=resolved_model,
             job_uuid=job_uuid,
             error=str(exc),
-            timestamp=int(time_module.time()),
+            timestamp=int(time.time()),
         )
         try:
             send_callback(callback_url, error_payload.model_dump(), site_id, job_id)
