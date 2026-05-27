@@ -2,7 +2,6 @@
 Job orchestration service — coordinates the full processing pipeline.
 """
 
-import os
 import shutil
 import time
 from pathlib import Path
@@ -17,6 +16,24 @@ from app.services.chunking_service import chunk_audio
 from app.services.transcription_service import transcribe_chunk
 from app.services.result_assembly_service import assemble_transcript
 from app.services.callback_client import send_callback
+
+
+def _safe_error(exc: Exception) -> str:
+    """Map internal exceptions to callback-safe error messages."""
+    message = str(exc).lower()
+    if "file too large" in message:
+        return "The audio file is larger than the worker limit."
+    if "unsupported url scheme" in message or "invalid url" in message:
+        return "The audio download URL is invalid."
+    if "download" in message or "status=403" in message or "status=404" in message or exc.__class__.__module__.startswith("requests"):
+        return "The audio file could not be downloaded."
+    if "ffmpeg" in message or "chunk" in message or "no chunks" in message:
+        return "The audio file could not be prepared for transcription."
+    if "openai" in message or "transcription" in message:
+        return "The audio could not be transcribed."
+    if "callback" in message:
+        return "The worker could not send the result callback."
+    return "The transcription job failed."
 
 
 def run_transcription_job(
@@ -58,7 +75,6 @@ def run_transcription_job(
         source_domain = (urlparse(audio_url).netloc or "unknown").strip()[:255]
         current_job.meta["attachment_id"] = attachment_id
         current_job.meta["source_url_domain"] = source_domain
-        current_job.meta["audio_url"] = (audio_url[:200] + "...") if len(audio_url) > 200 else audio_url
         current_job.save_meta()
 
     logger.info(
@@ -88,13 +104,13 @@ def run_transcription_job(
 
         # Phase 5: Send success callback
         success_payload = CallbackSuccess(
-            attachment_id=attachment_id,
+            job_id=job_id,
             status="done",
-            transcript=assembly.transcript,
-            seconds=int(round(assembly.total_duration)),
-            model=resolved_model,
+            attachment_id=attachment_id,
             job_uuid=job_uuid,
-            timestamp=int(time.time()),
+            transcript=assembly.transcript,
+            model=resolved_model,
+            seconds=int(round(assembly.total_duration)),
         )
         send_callback(callback_url, success_payload.model_dump(), site_id, job_id)
 
@@ -110,14 +126,11 @@ def run_transcription_job(
         logger.exception("job_end job_id=%s status=failed runtime_seconds=%.3f", job_id, elapsed)
 
         error_payload = CallbackFailure(
-            attachment_id=attachment_id,
+            job_id=job_id,
             status="error",
-            transcript="",
-            seconds=0,
-            model=resolved_model,
+            attachment_id=attachment_id,
             job_uuid=job_uuid,
-            error=str(exc),
-            timestamp=int(time.time()),
+            error=_safe_error(exc),
         )
         try:
             send_callback(callback_url, error_payload.model_dump(), site_id, job_id)

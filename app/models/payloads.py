@@ -2,23 +2,62 @@
 Pydantic models for worker API request and response payloads.
 """
 
-from pydantic import BaseModel, Field
 from typing import Optional
+from urllib.parse import urlparse
+
+from pydantic import BaseModel, Field, PositiveInt, field_validator
 
 
 class TranscribeRequest(BaseModel):
     """Inbound job submission payload from WP Audio Buddy."""
 
-    job_id: int
+    job_id: PositiveInt
     job_uuid: str
-    attachment_id: int
+    attachment_id: PositiveInt
     operation: str = "transcribe"
     audio_url: str
     callback_url: str
     model: Optional[str] = None
-    chunk_seconds: Optional[int] = None
+    chunk_seconds: Optional[PositiveInt] = None
     timestamp: int = 0
     site_id: Optional[str] = None
+
+    @field_validator("operation")
+    @classmethod
+    def validate_operation(cls, value: str) -> str:
+        if value != "transcribe":
+            raise ValueError("operation must be transcribe")
+        return value
+
+    @field_validator("job_uuid")
+    @classmethod
+    def validate_job_uuid(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("job_uuid is required")
+        return value
+
+    @field_validator("audio_url", "callback_url")
+    @classmethod
+    def validate_http_url(cls, value: str) -> str:
+        value = value.strip()
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("URL must be http or https")
+        return value
+
+    @field_validator("model")
+    @classmethod
+    def validate_model(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        value = value.strip()
+        if not value:
+            return None
+        allowed = {"gpt-4o-mini-transcribe", "gpt-4o-transcribe", "whisper-1"}
+        if value not in allowed:
+            raise ValueError("unsupported transcription model")
+        return value
 
 
 class TranscribeResponse(BaseModel):
@@ -50,23 +89,24 @@ class JobStatusResponse(BaseModel):
 class CallbackSuccess(BaseModel):
     """Payload sent to WordPress on successful transcription."""
 
-    attachment_id: int
+    job_id: str
     status: str = "done"
-    transcript: str
-    seconds: int = 0
-    model: str
+    attachment_id: int
     job_uuid: str = ""
-    timestamp: int = 0
+    transcript: str
+    model: str
+    seconds: int = 0
+    timestamp: Optional[int] = None
+    site_id: Optional[str] = None
 
 
 class CallbackFailure(BaseModel):
     """Payload sent to WordPress on failed transcription."""
 
-    attachment_id: int
+    job_id: str
     status: str = "error"
-    transcript: str = ""
-    seconds: int = 0
-    model: str = ""
+    attachment_id: int
     job_uuid: str = ""
     error: str
-    timestamp: int = 0
+    timestamp: Optional[int] = None
+    site_id: Optional[str] = None

@@ -82,26 +82,29 @@ Health check. Returns `{"ok": true}`.
 Submit a transcription job. Returns immediately after enqueueing.
 
 **Headers:**
-- `X-WPAB-Signature` — HMAC-SHA256 of the JSON body
+- `X-WPAB-Signature` — HMAC-SHA256 of the timestamp/site/body signing payload
 - `X-WPAB-Timestamp` — Unix timestamp
 - `X-WPAB-Site-ID` — Site identifier from `WPAB_ALLOWED_SITES`
 
 **Body:**
 ```json
 {
+  "job_id": 123,
   "attachment_id": 42,
-  "audio_url": "https://example.com/uploads/audio.mp3",
+  "audio_url": "https://example.com/wp-json/wpab/v1/audio-download?token=short-lived-signed-token",
   "callback_url": "https://example.com/wp-json/wpab/v1/worker-callback",
   "job_uuid": "uuid-from-wordpress",
+  "operation": "transcribe",
   "model": "gpt-4o-mini-transcribe",
   "chunk_seconds": 660,
-  "timestamp": 1712345678
+  "timestamp": 1712345678,
+  "site_id": "site-1"
 }
 ```
 
 **Response:**
 ```json
-{"ok": true, "data": {"job_id": "rq-job-id"}}
+{"ok": true, "data": {"job_id": "rq-job-id", "status": "accepted"}}
 ```
 
 ### `GET /v1/jobs/{job_id}`
@@ -135,13 +138,16 @@ Requests and callbacks use HMAC-SHA256 with site-specific shared secrets.
 
 **Request signing (WordPress → Worker):**
 1. JSON-encode the body with compact separators
-2. Compute `hmac_sha256(body, site_secret)`
-3. Send as `X-WPAB-Signature` hex header
+2. Build the signing payload:
+   `TIMESTAMP + "\n" + SITE_ID + "\n" + RAW_JSON_BODY`
+3. Compute `hmac_sha256(signing_payload, site_secret)`
+4. Send `X-WPAB-Site-ID`, `X-WPAB-Timestamp`, and `X-WPAB-Signature`
 
 **Worker verification:**
 1. Look up secret for `X-WPAB-Site-ID`
 2. Check `X-WPAB-Timestamp` is within tolerance window
-3. Compute expected HMAC and compare with `X-WPAB-Signature`
+3. Rebuild the timestamp/site/body signing payload
+4. Compute expected HMAC and compare with `X-WPAB-Signature`
 
 ---
 
@@ -170,24 +176,28 @@ After processing, the worker sends a signed POST to the callback URL provided by
 **Success payload:**
 ```json
 {
+  "job_id": "123",
+  "job_uuid": "uuid-from-wordpress",
   "attachment_id": 42,
   "status": "done",
+  "timestamp": 1712345678,
+  "site_id": "site-1",
   "transcript": "Full transcribed text...",
-  "seconds": 1245,
   "model": "gpt-4o-mini-transcribe",
-  "job_uuid": "uuid-from-wordpress",
-  "timestamp": 1712345678
+  "seconds": 1245
 }
 ```
 
 **Failure payload:**
 ```json
 {
+  "job_id": "123",
+  "job_uuid": "uuid-from-wordpress",
   "attachment_id": 42,
   "status": "error",
-  "error": "OpenAI transcription failed; ...",
-  "job_uuid": "uuid-from-wordpress",
-  "timestamp": 1712345678
+  "timestamp": 1712345678,
+  "site_id": "site-1",
+  "error": "The audio could not be transcribed."
 }
 ```
 
@@ -197,7 +207,7 @@ After processing, the worker sends a signed POST to the callback URL provided by
 
 - **No durable storage** — completed job results are not preserved after successful callback
 - **Single worker concurrency** — RQ processes one job at a time by default; adjust with `rq worker --num-workers`
-- **No signed download URLs** — the worker receives the public audio URL directly from WordPress
+- **Download URL signing is owned by WordPress** — the worker receives a short-lived signed audio URL, fetches it exactly as provided without cookies or WordPress auth headers, and validates size/type while downloading
 - **FFmpeg required** — audio chunking depends on FFmpeg (included in the Docker image)
 
 ---
@@ -211,6 +221,6 @@ After processing, the worker sends a signed POST to the callback URL provided by
 - [x] Phase 11-12: Cleanup and Docker deployment
 - [ ] Phase 13: Testing and hardening
 - [ ] Phase 14: Final documentation
-- [ ] Signed temporary download URLs
+- [x] Signed temporary download URLs
 - [ ] Per-site model overrides
 - [ ] Prometheus metrics endpoint

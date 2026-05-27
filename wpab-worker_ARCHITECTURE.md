@@ -299,12 +299,14 @@ The Audio Download Service may:
 - validate file size and content type
 - enforce timeouts
 - write to temporary storage
+- fetch signed WordPress download URLs exactly as provided, without cookies or WordPress auth headers
 
 The Audio Download Service must not:
 
 - trust arbitrary URLs without validation
 - expose downloaded files publicly
 - keep files after cleanup
+- log full signed URLs
 
 ## Chunking Service
 
@@ -498,6 +500,12 @@ Expected headers:
 X-WPAB-Site-ID
 X-WPAB-Timestamp
 X-WPAB-Signature
+```
+
+The signature is computed over the exact timestamp/site/body payload:
+
+```text
+TIMESTAMP + "\n" + SITE_ID + "\n" + RAW_JSON_BODY
 ```
 
 ## Site Authorization

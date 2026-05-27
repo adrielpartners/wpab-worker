@@ -4,16 +4,16 @@ FastAPI application routes.
 
 import time as time_module
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import ValidationError
 from redis import Redis
 from rq import Queue
 from rq.job import Job
-from rq.registry import FailedJobRegistry, StartedJobRegistry
 
 from app.core.config import settings
 from app.core.logging import logger
 from app.core.security import verify_request
-from app.models.payloads import TranscribeRequest, TranscribeResponse, ErrorResponse, JobStatusResponse
+from app.models.payloads import TranscribeRequest, JobStatusResponse
 from app.services.job_service import run_transcription_job
 
 router = APIRouter()
@@ -68,6 +68,13 @@ def _normalize_status(status: str) -> str:
     return mapping.get(status, status)
 
 
+def _raise_error(status_code: int, code: str, message: str) -> None:
+    raise HTTPException(
+        status_code=status_code,
+        detail={"code": code, "message": message},
+    )
+
+
 # --- Endpoints ---
 
 
@@ -85,59 +92,58 @@ async def submit_transcription_job(request: Request):
     raw_body = await request.body()
     x_signature = request.headers.get("x-wpab-signature", "")
     x_site_id = request.headers.get("x-wpab-site-id", "")
-    x_timestamp = request.headers.get("x-wpab-timestamp", "0")
+    x_timestamp = request.headers.get("x-wpab-timestamp", "")
 
-    # Parse timestamp header
+    if not x_signature or not x_site_id or not x_timestamp:
+        _raise_error(401, "INVALID_SIGNATURE", "Missing signature headers.")
+
     try:
         timestamp = int(x_timestamp)
     except ValueError:
-        timestamp = 0
+        _raise_error(401, "TIMESTAMP_EXPIRED", "Invalid request timestamp.")
 
-    # Verify HMAC
-    if not verify_request(raw_body, x_signature, x_site_id, timestamp):
-        raise HTTPException(status_code=401, detail="Invalid or missing signature")
+    if not verify_request(
+        raw_body,
+        x_signature,
+        x_site_id,
+        timestamp,
+    ):
+        _raise_error(401, "INVALID_SIGNATURE", "Invalid or missing signature.")
 
-    # Parse and validate payload
     try:
-        payload_data = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON body")
+        payload = TranscribeRequest.model_validate_json(raw_body)
+    except ValidationError:
+        _raise_error(422, "INVALID_PAYLOAD", "Invalid transcription job payload.")
+    except ValueError:
+        _raise_error(400, "INVALID_PAYLOAD", "Invalid JSON body.")
 
-    # Extract fields from the payload (the TranscribeRequest model)
-    attachment_id = payload_data.get("attachment_id", 0)
-    audio_url = payload_data.get("audio_url", "")
-    callback_url = payload_data.get("callback_url", "")
-    site_id = payload_data.get("site_id", x_site_id)
-    job_uuid = payload_data.get("job_uuid", "")
-    model = payload_data.get("model", None)
-    chunk_seconds = payload_data.get("chunk_seconds", None)
-    job_id_from_payload = payload_data.get("job_id", None)
+    if payload.site_id and payload.site_id != x_site_id:
+        _raise_error(401, "INVALID_SIGNATURE", "Payload site does not match signed site.")
 
-    if not attachment_id or not audio_url or not callback_url:
-        raise HTTPException(status_code=400, detail="Missing required fields: attachment_id, audio_url, callback_url")
+    if payload.timestamp and payload.timestamp != timestamp:
+        _raise_error(401, "INVALID_SIGNATURE", "Payload timestamp does not match signed timestamp.")
 
-    # Enqueue the job
     queue = get_queue()
     rq_job = queue.enqueue(
         run_transcription_job,
-        attachment_id=attachment_id,
-        audio_url=audio_url,
-        callback_url=callback_url,
-        site_id=site_id,
-        model=model,
-        chunk_seconds=chunk_seconds,
-        job_uuid=job_uuid,
-        job_id=str(job_id_from_payload) if job_id_from_payload else None,
+        attachment_id=payload.attachment_id,
+        audio_url=payload.audio_url,
+        callback_url=payload.callback_url,
+        site_id=x_site_id,
+        model=payload.model,
+        chunk_seconds=payload.chunk_seconds,
+        job_uuid=payload.job_uuid,
+        job_id=str(payload.job_id),
         job_timeout=settings.QUEUE_DEFAULT_TIMEOUT,
         result_ttl=settings.JOB_RESULT_TTL,
     )
 
     logger.info(
         "job_enqueued rq_job_id=%s attachment_id=%s site_id=%s",
-        rq_job.id, attachment_id, site_id,
+        rq_job.id, payload.attachment_id, x_site_id,
     )
 
-    return {"ok": True, "data": {"job_id": rq_job.id}}
+    return {"ok": True, "data": {"job_id": rq_job.id, "status": "accepted"}}
 
 
 @router.get("/v1/jobs/{job_id}")
@@ -146,7 +152,7 @@ def get_job_status(job_id: str):
     try:
         job = Job.fetch(job_id, connection=get_redis())
     except Exception:
-        raise HTTPException(status_code=404, detail="Job not found")
+        _raise_error(404, "JOB_NOT_FOUND", "Job not found.")
 
     status = job.get_status(refresh=True)
     meta = job.meta or {}
@@ -162,43 +168,3 @@ def get_job_status(job_id: str):
         error=error_summary,
         attachment_id=meta.get("attachment_id"),
     ).model_dump(exclude_none=True)
-
-
-@router.get("/v1/admin/queue")
-def queue_status():
-    """Get aggregate queue statistics."""
-    redis_conn = get_redis()
-    started_registry = StartedJobRegistry(name=settings.QUEUE_NAME, connection=redis_conn)
-    failed_registry = FailedJobRegistry(name=settings.QUEUE_NAME, connection=redis_conn)
-    q = get_queue()
-
-    return {
-        "queue_name": settings.QUEUE_NAME,
-        "queued_count": len(q),
-        "started_count": len(started_registry),
-        "failed_count": len(failed_registry),
-    }
-
-
-@router.get("/v1/admin/failed")
-def failed_jobs(limit: int = 20):
-    """List recently failed jobs."""
-    safe_limit = max(1, min(limit, 100))
-    redis_conn = get_redis()
-    failed_registry = FailedJobRegistry(name=settings.QUEUE_NAME, connection=redis_conn)
-    job_ids = failed_registry.get_job_ids()[:safe_limit]
-
-    items = []
-    for jid in job_ids:
-        try:
-            job = Job.fetch(jid, connection=redis_conn)
-        except Exception:
-            continue
-        exc_info = job.exc_info or ""
-        items.append({
-            "job_id": job.id,
-            "failed_at": _fmt_dt(job.ended_at),
-            "error": _safe_truncate(exc_info.splitlines()[-1] if exc_info else None, limit=300),
-        })
-
-    return {"queue_name": settings.QUEUE_NAME, "failed": items}

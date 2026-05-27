@@ -260,6 +260,7 @@ Signed URLs keep access controlled while allowing the worker to pull the file ef
 
 - WordPress must generate signed temporary URLs.
 - The worker must handle download failure, expiration, and timeout.
+- The worker must fetch the signed URL exactly as provided and must not add WordPress cookies or authentication headers.
 - Some hosting environments may require special handling for protected files.
 
 ## Date Adopted
@@ -346,6 +347,8 @@ Expected WordPress endpoint:
 ```text
 POST /wp-json/wpab/v1/worker-callback
 ```
+
+The worker receives the callback URL dynamically in the signed job payload and does not hardcode this route.
 
 ## Rationale
 

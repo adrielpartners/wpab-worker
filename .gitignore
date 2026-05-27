@@ -3,6 +3,7 @@ __pycache__/
 .env
 /work/
 .venv/
+.venv*/
 venv/
 .DS_Store
 *.log

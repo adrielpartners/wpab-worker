@@ -41,6 +41,14 @@ def download_audio(audio_url: str, job_dir: Path, job_id: str) -> DownloadResult
     bytes_downloaded = 0
 
     with requests.get(audio_url, stream=True, timeout=timeout) as response:
+        if response.status_code in {403, 404}:
+            logger.warning(
+                "download_signed_url_rejected job_id=%s source_url_domain=%s status=%s",
+                job_id,
+                source_domain,
+                response.status_code,
+            )
+            raise RuntimeError(f"audio download failed: status={response.status_code}")
         response.raise_for_status()
         content_length_raw = response.headers.get("Content-Length")
         content_type = (response.headers.get("Content-Type") or "").strip().lower()

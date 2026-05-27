@@ -286,9 +286,8 @@ Validate:
 
 - site ID exists
 - timestamp is within tolerance
-- signature matches expected payload
-- body hash matches signed content if used
-- request method and path are included in signing payload
+- signature matches the exact timestamp/site/body signing payload:
+  `TIMESTAMP + "\n" + SITE_ID + "\n" + RAW_JSON_BODY`
 
 Reject invalid requests before:
 
@@ -429,6 +428,8 @@ Download rules:
 - validate content type when practical
 - write to temp storage only
 - do not expose downloaded file publicly
+- fetch the URL exactly as provided, without cookies or WordPress auth headers
+- treat 403 and 404 responses as normal job failures with safe diagnostics
 
 ## Chunking
 
@@ -468,10 +469,10 @@ Result assembly should:
 Expected WordPress route:
 
 ```text
-POST /wp-json/wp-audio-buddy/v1/transcription-callback
+POST /wp-json/wpab/v1/worker-callback
 ```
 
-Note: The actual route name is **`wp-audio-buddy/v1/transcription-callback`** (not `wpab/v1/worker-callback`). This is the route registered by the WP Audio Buddy plugin. The worker receives the callback URL dynamically from the job submission payload and does not hardcode the route.
+The worker receives the callback URL dynamically from the job submission payload and does not hardcode the route.
 
 ## Success Payload
 
@@ -480,13 +481,14 @@ Callback success payload should include:
 ```json
 {
   "job_id": "wpab_123",
-  "status": "completed",
+  "job_uuid": "uuid-from-wordpress",
   "attachment_id": 456,
-  "result": {
-    "transcript": "...",
-    "segments": [],
-    "metadata": {}
-  }
+  "status": "done",
+  "timestamp": 1712345678,
+  "site_id": "site-1",
+  "transcript": "...",
+  "model": "gpt-4o-mini-transcribe",
+  "seconds": 1245
 }
 ```
 
@@ -497,11 +499,12 @@ Callback failure payload should include:
 ```json
 {
   "job_id": "wpab_123",
-  "status": "failed",
-  "error": {
-    "code": "TRANSCRIPTION_FAILED",
-    "message": "User-safe message."
-  }
+  "job_uuid": "uuid-from-wordpress",
+  "attachment_id": 456,
+  "status": "error",
+  "timestamp": 1712345678,
+  "site_id": "site-1",
+  "error": "User-safe message."
 }
 ```
 

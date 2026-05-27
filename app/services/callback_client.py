@@ -20,20 +20,10 @@ def _sleep_for_retry(attempt: int) -> None:
     time.sleep(delay)
 
 
-def _truncate(value: str, limit: int = 500) -> str:
-    if len(value) <= limit:
-        return value
-    return f"{value[:limit]}..."
-
-
 def _error_with_response_context(prefix: str, response: requests.Response | None = None, exc: Exception | None = None) -> RuntimeError:
     status = response.status_code if response is not None else "n/a"
-    snippet = ""
-    if response is not None:
-        snippet = _truncate((response.text or "").strip().replace("\n", " "))
-    if not snippet and exc is not None:
-        snippet = _truncate(str(exc))
-    return RuntimeError(f"{prefix}; status={status}; body={snippet}")
+    error_type = exc.__class__.__name__ if exc is not None else "HTTPError"
+    return RuntimeError(f"{prefix}; status={status}; error_type={error_type}")
 
 
 def send_callback(
@@ -48,14 +38,21 @@ def send_callback(
     Signs the payload with the site's shared secret.
     Retries on transient failures up to CALLBACK_RETRY_ATTEMPTS times.
     """
-    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-    signature = make_callback_signature(raw, site_id)
+    timestamp = int(time.time())
+    callback_payload = dict(payload)
+    callback_payload["timestamp"] = timestamp
+    if site_id:
+        callback_payload["site_id"] = site_id
+    raw = json.dumps(callback_payload, separators=(",", ":")).encode("utf-8")
+    signature = make_callback_signature(raw, site_id, timestamp)
 
     if signature is None:
         raise RuntimeError(f"Cannot send callback: no secret configured for site_id={site_id}")
 
     headers = {
         "Content-Type": "application/json",
+        "X-WPAB-Site-ID": site_id,
+        "X-WPAB-Timestamp": str(timestamp),
         "X-WPAB-Signature": signature,
     }
     timeout = settings.CALLBACK_TIMEOUT
@@ -93,6 +90,7 @@ def send_callback(
 
             if getattr(exc, "response", None) is not None:
                 raise _error_with_response_context("Callback failed", exc.response, exc) from exc
-            raise RuntimeError(f"Callback failed; error={_truncate(str(exc))}") from exc
+            raise RuntimeError(f"Callback failed; error_type={exc.__class__.__name__}") from exc
 
-    raise RuntimeError(f"Callback failed after retries; error={_truncate(str(last_error))}")
+    last_error_type = last_error.__class__.__name__ if last_error is not None else "Unknown"
+    raise RuntimeError(f"Callback failed after retries; error_type={last_error_type}")

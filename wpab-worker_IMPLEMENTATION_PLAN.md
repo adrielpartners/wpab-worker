@@ -233,8 +233,8 @@ X-WPAB-Signature
 - [ ] Add request signing payload format.
 - [ ] Add signature generation helper.
 - [ ] Add signature verification helper.
-- [ ] Include method and path in signing payload.
-- [ ] Include body hash in signing payload if chosen.
+- [ ] Sign `timestamp + "\n" + site_id + "\n" + raw_json_body`.
+- [ ] Preserve the exact raw JSON body used for signing.
 - [ ] Reject unknown site IDs.
 - [ ] Reject stale timestamps.
 - [ ] Reject invalid signatures.
@@ -349,6 +349,8 @@ Goal: Download source audio from short-lived signed WordPress URLs safely.
 - [ ] Enforce max downloaded bytes.
 - [ ] Validate content type or extension when practical.
 - [ ] Stream download to temp file.
+- [ ] Fetch signed URLs exactly as provided without cookies or WordPress auth headers.
+- [ ] Treat 403/404 signed URL responses as normal job failures with safe diagnostics.
 - [ ] Store only in configured temp directory.
 - [ ] Return structured download result.
 - [ ] Normalize errors.
@@ -453,6 +455,8 @@ Goal: Send signed success or failure callbacks to WordPress.
 ```text
 POST /wp-json/wpab/v1/worker-callback
 ```
+
+The worker receives the callback URL dynamically from the job payload and does not hardcode this route.
 
 ## Checklist
 
