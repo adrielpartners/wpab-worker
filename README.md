@@ -3,7 +3,7 @@
 **Version:** 0.2.0  
 **System Type:** Backend Worker Service  
 
-A narrow backend processing service for [WP Audio Buddy](https://github.com/adrielpartners/wp-audio-buddy). Handles heavy audio-processing work that should not run inside WordPress — audio downloading, FFmpeg chunking, OpenAI transcription, and signed callbacks.
+A narrow backend processing service for [WP Audio Buddy](https://github.com/adrielpartners/wp-audio-buddy). Handles heavy audio-processing work that should not run inside WordPress — audio downloading, FFmpeg chunking, provider-backed transcription, and signed callbacks.
 
 ---
 
@@ -13,7 +13,7 @@ A narrow backend processing service for [WP Audio Buddy](https://github.com/adri
 # Copy environment template
 cp .env.example .env
 # Edit .env with your settings
-# Minimum: OPENAI_API_KEY + WPAB_ALLOWED_SITES
+# Minimum: one provider API key + WPAB_ALLOWED_SITES
 
 # Start all services
 docker compose up --build
@@ -34,7 +34,7 @@ HTTP Request
 → RQ Queue → Background Worker
   → Audio Download Service
   → Chunking Service (FFmpeg)
-  → Transcription Service (OpenAI)
+  → Transcription Provider
   → Result Assembly Service
   → Callback Client (signed POST to WordPress)
 → Cleanup Service
@@ -116,19 +116,22 @@ Get the current status of a job.
 
 | Variable | Default | Description |
 |---|---|---|
-| `OPENAI_API_KEY` | — | OpenAI API key (required) |
+| `OPENAI_API_KEY` | — | OpenAI API key |
+| `GROQ_API_KEY` | — | Groq API key |
+| `OPENROUTER_API_KEY` | — | OpenRouter API key |
+| `DEEPGRAM_API_KEY` | — | Deepgram API key |
 | `WPAB_ALLOWED_SITES` | — | Comma-separated `site_id=secret` pairs (required in production) |
 | `REDIS_URL` | `redis://localhost:6379` | Redis connection URL |
 | `WPAB_LOG_LEVEL` | `INFO` | Logging level |
 | `WPAB_WORKER_ENV` | `development` | Environment name |
-| `WPAB_DEFAULT_MODEL` | `gpt-4o-mini-transcribe` | Default OpenAI transcription model |
+| `WPAB_DEFAULT_MODEL` | `gpt-4o-mini-transcribe` | Fallback transcription model when provider metadata has no default |
 | `WPAB_MAX_DOWNLOAD_MB` | `200` | Max audio file size to download (MB) |
-| `WPAB_DEFAULT_CHUNK_SECONDS` | `720` | Seconds per audio chunk |
+| `WPAB_DEFAULT_CHUNK_SECONDS` | `720` | Fallback seconds per audio chunk; provider defaults may override |
 | `WPAB_REQUEST_TIMESTAMP_TOLERANCE_SECONDS` | `300` | Max clock drift for HMAC timestamps (seconds) |
 | `WPAB_WORK_ROOT` | `/work` | Directory for temporary audio files |
 | `WPAB_RETENTION_HOURS` | `168` | Hours to keep stale job files before cleanup |
 | `WPAB_KEEP_JOB_FILES` | `0` | Set to `1` to preserve temp files for debugging |
-| `WPAB_MAX_RETRY_ATTEMPTS` | `4` | Max retries for transient OpenAI/callback failures |
+| `WPAB_MAX_RETRY_ATTEMPTS` | `4` | Max retries for transient provider/callback failures |
 
 ---
 

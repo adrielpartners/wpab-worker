@@ -40,7 +40,7 @@ def chunk_audio(source_path: Path, chunk_dir: Path, chunk_seconds: int | None = 
     seconds = max(1, min(int(seconds), settings.MAX_CHUNK_SECONDS))
 
     chunk_dir.mkdir(parents=True, exist_ok=True)
-    output_pattern = chunk_dir / "chunk_%04d.wav"
+    output_pattern = chunk_dir / "chunk_%04d.mp3"
 
     cmd = [
         "ffmpeg",
@@ -54,6 +54,8 @@ def chunk_audio(source_path: Path, chunk_dir: Path, chunk_seconds: int | None = 
         "1",
         "-ar",
         "16000",
+        "-b:a",
+        "48k",
         "-f",
         "segment",
         "-segment_time",
@@ -66,7 +68,7 @@ def chunk_audio(source_path: Path, chunk_dir: Path, chunk_seconds: int | None = 
 
     subprocess.run(cmd, check=True)
 
-    chunks = sorted(chunk_dir.glob("chunk_*.wav"))
+    chunks = sorted(chunk_dir.glob("chunk_*.mp3"))
     if not chunks:
         raise RuntimeError("No chunks created by ffmpeg")
 

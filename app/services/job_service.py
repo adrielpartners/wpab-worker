@@ -13,7 +13,7 @@ from app.core.logging import logger
 from app.models.payloads import CallbackSuccess, CallbackFailure
 from app.services.audio_download_service import download_audio
 from app.services.chunking_service import chunk_audio
-from app.services.providers.registry import get_transcription_provider
+from app.services.providers.registry import get_provider_info, get_transcription_provider
 from app.services.result_assembly_service import assemble_transcript
 from app.services.callback_client import send_callback
 
@@ -54,8 +54,10 @@ def run_transcription_job(
     Resolves the provider from the job payload and uses it for chunk transcription.
     """
     started = time.time()
-    resolved_model = model or settings.DEFAULT_MODEL
-    resolved_chunk_seconds = max(1, min(int(chunk_seconds or settings.DEFAULT_CHUNK_SECONDS), settings.MAX_CHUNK_SECONDS))
+    provider_info = get_provider_info(provider)
+    resolved_model = model or provider_info.get("default_model") or settings.DEFAULT_MODEL
+    default_chunk_seconds = int(provider_info.get("default_chunk_seconds") or settings.DEFAULT_CHUNK_SECONDS)
+    resolved_chunk_seconds = max(1, min(int(chunk_seconds or default_chunk_seconds), settings.MAX_CHUNK_SECONDS))
 
     # Resolve job_id.
     if not job_id:
@@ -71,7 +73,7 @@ def run_transcription_job(
     job_dir.mkdir(parents=True, exist_ok=True)
 
     # Resolve provider.
-    provider_instance = get_transcription_provider(provider)
+    provider_instance = get_transcription_provider(provider, provider_config)
 
     # Store metadata in RQ job.
     current_job = get_current_job()
@@ -111,6 +113,7 @@ def run_transcription_job(
 
         # Phase 5: Send success callback
         success_payload = CallbackSuccess(
+            job_id=str(job_id),
             attachment_id=attachment_id,
             status="done",
             transcript=assembly.transcript,
@@ -134,11 +137,9 @@ def run_transcription_job(
 
         safe_message = _safe_error(exc)
         error_payload = CallbackFailure(
+            job_id=str(job_id),
             attachment_id=attachment_id,
             status="error",
-            transcript="",
-            seconds=0,
-            model=resolved_model,
             job_uuid=job_uuid,
             error=safe_message,
             timestamp=int(time.time()),

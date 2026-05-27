@@ -64,7 +64,13 @@ def test_valid_signed_request_enqueues(monkeypatch):
         "operation": "transcribe",
         "audio_url": "https://example.com/audio.mp3?wpab_sig=keep%2Fexact",
         "callback_url": "https://example.com/wp-json/wpab/v1/worker-callback",
-        "model": "gpt-4o-mini-transcribe",
+        "model": "openai/whisper-large-v3",
+        "provider": "openrouter",
+        "provider_config": {
+            "endpoint": "https://openrouter.ai/api",
+            "api_key": "must-not-be-kept",
+        },
+        "chunk_seconds": 55,
         "timestamp": 0,
         "site_id": "site-a",
     }
@@ -95,3 +101,7 @@ def test_valid_signed_request_enqueues(monkeypatch):
     assert fake_queue.kwargs["attachment_id"] == 456
     assert fake_queue.kwargs["job_id"] == "123"
     assert fake_queue.kwargs["audio_url"] == "https://example.com/audio.mp3?wpab_sig=keep%2Fexact"
+    assert fake_queue.kwargs["provider"] == "openrouter"
+    assert fake_queue.kwargs["provider_config"] == {"endpoint": "https://openrouter.ai/api"}
+    assert fake_queue.kwargs["model"] == "openai/whisper-large-v3"
+    assert fake_queue.kwargs["chunk_seconds"] == 55

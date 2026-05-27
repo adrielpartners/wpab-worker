@@ -1,11 +1,11 @@
 """
-OpenAI-compatible transcription provider.
+OpenRouter transcription provider.
 
-This provider works with any OpenAI-compatible API endpoint,
-including OpenAI, Groq, DeepSeek, OpenRouter (text only), and
-any other service that implements the same `/v1/audio/transcriptions` format.
+OpenRouter's speech-to-text endpoint accepts JSON with base64-encoded audio,
+not the multipart file upload used by OpenAI and Groq.
 """
 
+import base64
 import random
 import time
 from pathlib import Path
@@ -16,23 +16,20 @@ from app.core.config import settings
 from app.core.logging import logger
 
 
-class OpenAICompatProvider:
-    """Transcription provider for OpenAI-compatible APIs."""
+class OpenRouterProvider:
+    """Transcription provider for OpenRouter STT models."""
 
-    def __init__(self, api_key: str, endpoint: str):
+    def __init__(self, api_key: str, endpoint: str = 'https://openrouter.ai/api'):
         self.api_key = api_key
         self.endpoint = endpoint.rstrip('/').removesuffix('/v1')
 
     def _sleep_for_retry(self, attempt: int) -> None:
         if attempt <= 1:
             return
-        delay = float(2 ** (attempt - 2)) + random.uniform(0.0, 0.4)
-        time.sleep(delay)
+        time.sleep(float(2 ** (attempt - 2)) + random.uniform(0.0, 0.4))
 
     def _truncate(self, value: str, limit: int = 500) -> str:
-        if len(value) <= limit:
-            return value
-        return f"{value[:limit]}..."
+        return value if len(value) <= limit else f"{value[:limit]}..."
 
     def _error_with_context(self, prefix: str, response=None, exc=None) -> RuntimeError:
         status = response.status_code if response is not None else 'n/a'
@@ -44,12 +41,6 @@ class OpenAICompatProvider:
         return RuntimeError(f"{prefix}; status={status}; body={snippet}")
 
     def transcribe_chunk(self, chunk_path: Path, model: str, job_id: str) -> str:
-        """
-        Transcribe a single audio chunk via the OpenAI-compatible API.
-
-        Includes bounded retry for transient errors (429, 5xx, network timeouts).
-        Returns the transcript text.
-        """
         url = f"{self.endpoint}/v1/audio/transcriptions"
         timeout = (settings.DOWNLOAD_CONNECT_TIMEOUT, settings.DOWNLOAD_READ_TIMEOUT)
         last_error: Exception | None = None
@@ -57,31 +48,37 @@ class OpenAICompatProvider:
         for attempt in range(1, settings.MAX_RETRY_ATTEMPTS + 1):
             self._sleep_for_retry(attempt)
             try:
-                with chunk_path.open('rb') as audio_file:
-                    files = {'file': (chunk_path.name, audio_file, _mime_type(chunk_path))}
-                    data = {'model': model}
-                    headers = {'Authorization': f'Bearer {self.api_key}'}
-                    response = requests.post(
-                        url,
-                        headers=headers,
-                        data=data,
-                        files=files,
-                        timeout=timeout,
-                    )
+                audio_data = base64.b64encode(chunk_path.read_bytes()).decode('ascii')
+                response = requests.post(
+                    url,
+                    headers={
+                        'Authorization': f'Bearer {self.api_key}',
+                        'Content-Type': 'application/json',
+                        'HTTP-Referer': settings.PUBLIC_BASE_URL,
+                        'X-Title': 'WP Audio Buddy Worker',
+                    },
+                    json={
+                        'model': model,
+                        'input_audio': {
+                            'data': audio_data,
+                            'format': _audio_format(chunk_path),
+                        },
+                    },
+                    timeout=timeout,
+                )
 
                 if response.status_code in settings.RETRYABLE_STATUS_CODES and attempt < settings.MAX_RETRY_ATTEMPTS:
                     logger.warning(
-                        "openai_retry job_id=%s attempt=%s status=%s chunk=%s",
+                        "openrouter_retry job_id=%s attempt=%s status=%s chunk=%s",
                         job_id, attempt, response.status_code, chunk_path.name,
                     )
                     continue
 
                 response.raise_for_status()
-                payload = response.json()
-                text = payload.get('text', '').strip()
+                text = response.json().get('text', '').strip()
                 if text:
                     return text
-                continue
+                last_error = RuntimeError("OpenRouter returned empty transcription text")
 
             except requests.exceptions.RequestException as exc:
                 last_error = exc
@@ -92,28 +89,18 @@ class OpenAICompatProvider:
 
                 if retryable and attempt < settings.MAX_RETRY_ATTEMPTS:
                     logger.warning(
-                        "openai_retry job_id=%s attempt=%s status=%s error=%s chunk=%s",
+                        "openrouter_retry job_id=%s attempt=%s status=%s error=%s chunk=%s",
                         job_id, attempt, status_code, exc.__class__.__name__, chunk_path.name,
                     )
                     continue
 
                 if getattr(exc, 'response', None) is not None:
-                    raise self._error_with_context('OpenAI transcription failed', exc.response, exc) from exc
-                raise RuntimeError(f"OpenAI transcription failed; error={self._truncate(str(exc))}") from exc
+                    raise self._error_with_context('OpenRouter transcription failed', exc.response, exc) from exc
+                raise RuntimeError(f"OpenRouter transcription failed; error={self._truncate(str(exc))}") from exc
 
-        raise RuntimeError(f"OpenAI transcription failed after retries; error={self._truncate(str(last_error))}")
+        raise RuntimeError(f"OpenRouter transcription failed after retries; error={self._truncate(str(last_error))}")
 
 
-def _mime_type(path: Path) -> str:
-    suffix = path.suffix.lower()
-    if suffix == '.mp3':
-        return 'audio/mpeg'
-    if suffix == '.m4a':
-        return 'audio/mp4'
-    if suffix == '.flac':
-        return 'audio/flac'
-    if suffix == '.ogg':
-        return 'audio/ogg'
-    if suffix == '.webm':
-        return 'audio/webm'
-    return 'audio/wav'
+def _audio_format(path: Path) -> str:
+    suffix = path.suffix.lower().lstrip('.')
+    return suffix if suffix in {'wav', 'mp3', 'flac', 'm4a', 'ogg', 'webm', 'aac'} else 'mp3'

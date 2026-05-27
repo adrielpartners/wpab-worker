@@ -8,6 +8,9 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, Field, PositiveInt, field_validator
 
 
+SUPPORTED_PROVIDERS = {"openai", "groq", "deepgram", "openrouter"}
+
+
 class TranscribeRequest(BaseModel):
     """Inbound job submission payload from WP Audio Buddy."""
 
@@ -56,10 +59,26 @@ class TranscribeRequest(BaseModel):
         value = value.strip()
         if not value:
             return None
-        allowed = {"gpt-4o-mini-transcribe", "gpt-4o-transcribe", "whisper-1"}
-        if value not in allowed:
-            raise ValueError("unsupported transcription model")
+        if len(value) > 120 or any(char.isspace() for char in value):
+            raise ValueError("invalid transcription model")
         return value
+
+    @field_validator("provider")
+    @classmethod
+    def validate_provider(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value not in SUPPORTED_PROVIDERS:
+            raise ValueError("unsupported transcription provider")
+        return value
+
+    @field_validator("provider_config")
+    @classmethod
+    def validate_provider_config(cls, value: Optional[dict]) -> Optional[dict]:
+        if value is None:
+            return None
+
+        endpoint = str(value.get("endpoint") or "").strip()
+        return {"endpoint": endpoint} if endpoint else {}
 
 
 class TranscribeResponse(BaseModel):

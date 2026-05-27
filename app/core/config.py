@@ -26,6 +26,7 @@ class Settings:
     # Provider API keys
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
     DEEPGRAM_API_KEY: str = os.getenv("DEEPGRAM_API_KEY", "")
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
 
     # OpenAI (legacy, also used by OpenAI provider)
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
@@ -84,8 +85,8 @@ class Settings:
     def validate_production(self) -> None:
         """Validate that required settings are present in production."""
         if self.ENV == "production":
-            if not self.OPENAI_API_KEY:
-                raise RuntimeError("OPENAI_API_KEY is required in production")
+            if not any([self.OPENAI_API_KEY, self.GROQ_API_KEY, self.DEEPGRAM_API_KEY, self.OPENROUTER_API_KEY]):
+                raise RuntimeError("At least one provider API key is required in production")
             if not self.ALLOWED_SITES_RAW:
                 raise RuntimeError("WPAB_ALLOWED_SITES is required in production")
             if not self.allowed_sites:

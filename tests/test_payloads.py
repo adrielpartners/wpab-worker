@@ -33,9 +33,32 @@ def test_transcribe_request_rejects_wrong_operation():
         TranscribeRequest.model_validate(valid_payload(operation="summarize"))
 
 
-def test_transcribe_request_rejects_unsupported_model():
+def test_transcribe_request_rejects_invalid_model():
     with pytest.raises(ValidationError):
-        TranscribeRequest.model_validate(valid_payload(model="not-a-real-model"))
+        TranscribeRequest.model_validate(valid_payload(model="not a real model"))
+
+
+def test_transcribe_request_accepts_openrouter_payload():
+    payload = TranscribeRequest.model_validate(
+        valid_payload(
+            provider="openrouter",
+            model="openai/whisper-large-v3",
+            chunk_seconds=55,
+            provider_config={
+                "endpoint": "https://openrouter.ai/api",
+                "api_key": "must-not-be-kept",
+            },
+        )
+    )
+
+    assert payload.provider == "openrouter"
+    assert payload.model == "openai/whisper-large-v3"
+    assert payload.provider_config == {"endpoint": "https://openrouter.ai/api"}
+
+
+def test_transcribe_request_rejects_unsupported_provider():
+    with pytest.raises(ValidationError):
+        TranscribeRequest.model_validate(valid_payload(provider="nope"))
 
 
 def test_transcribe_request_rejects_invalid_url():
